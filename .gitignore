@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Data files
+data/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Screenshots
+screenshot*.png
+final-screenshot.png
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
