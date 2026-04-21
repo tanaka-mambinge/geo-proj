@@ -151,20 +151,20 @@ export function Map() {
       
       popupContent.innerHTML = `
         <div style="padding: 8px;">
-          <h3 style="margin: 0 0 12px 0; color: ${goldColor}; font-size: 16px; font-weight: 600;">
-            🏆 ${goldProps.Class}
+          <h3 style="margin: 0 0 8px 0; color: ${goldColor}; font-size: 16px; font-weight: 600;">
+            🏆 Gold Potential: ${goldProps.Class}
           </h3>
-          <p style="margin: 4px 0; color: #6b7280; font-size: 14px;">
-            <strong>Area:</strong> ${goldProps.Area.toLocaleString()} m²
+          <p style="margin: 4px 0; color: #6b7280; font-size: 13px;">
+            <strong>Gold Area:</strong> ${goldProps.Area.toLocaleString()} m²
           </p>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 12px 0;" />
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 10px 0;" />
           ${farmProps ? `
             <p style="margin: 4px 0; color: #374151; font-size: 14px;">
-              <strong>📍 Farm:</strong> ${farmProps.NAME || 'Unnamed'}
+              <strong>📍 Located on Farm:</strong> ${farmProps.NAME || 'Unnamed'}
             </p>
             <p style="margin: 4px 0; font-size: 14px;">
-              <strong>Status:</strong> 
-              <span style="color: ${farmProps.STATUS === 'Commercial' ? '#16a34a' : '#2563eb'}">
+              <strong>Farm Status:</strong> 
+              <span style="color: ${farmProps.STATUS === 'Commercial' ? '#16a34a' : '#2563eb'}; font-weight: 500;">
                 ${farmProps.STATUS}
               </span>
             </p>
