@@ -69,30 +69,49 @@ function reprojectGeoJSON(geojson) {
   };
 }
 
-// Load and reproject Farms data
+// Reproject Farms data
 console.log('Reprojecting Farms data...');
 const farmsData = JSON.parse(fs.readFileSync('data/Farms.geojson', 'utf8'));
 const farmsReprojected = reprojectGeoJSON(farmsData);
 fs.writeFileSync('src/data/farms-wgs84.json', JSON.stringify(farmsReprojected, null, 2));
 console.log('✓ Saved src/data/farms-wgs84.json');
 
-// Load and reproject Gold Potential data
+// Reproject Gold Potential data
 console.log('\nReprojecting Gold Potential data...');
 const goldData = JSON.parse(fs.readFileSync('data/GoldPotentialMap.geojson', 'utf8'));
 const goldReprojected = reprojectGeoJSON(goldData);
 fs.writeFileSync('src/data/gold-potential-wgs84.json', JSON.stringify(goldReprojected, null, 2));
 console.log('✓ Saved src/data/gold-potential-wgs84.json');
 
+// Reproject LULCMAP data
+console.log('\nReprojecting LULCMAP (Land Use) data...');
+const lulcData = JSON.parse(fs.readFileSync('data/LULCMAP.geojson', 'utf8'));
+const lulcReprojected = reprojectGeoJSON(lulcData);
+fs.writeFileSync('src/data/lulc-wgs84.json', JSON.stringify(lulcReprojected, null, 2));
+console.log('✓ Saved src/data/lulc-wgs84.json');
+
 // Log summary
 console.log('\n=== Summary ===');
 console.log(`Farms: ${farmsReprojected.features.length} features`);
 console.log(`Gold Potential: ${goldReprojected.features.length} features`);
+console.log(`LULCMAP: ${lulcReprojected.features.length} features`);
+
 console.log('\nGold Potential classes:');
-const classes = {};
+const goldClasses = {};
 goldReprojected.features.forEach(f => {
   const cls = f.properties.Class;
-  classes[cls] = (classes[cls] || 0) + 1;
+  goldClasses[cls] = (goldClasses[cls] || 0) + 1;
 });
-Object.entries(classes).forEach(([cls, count]) => {
+Object.entries(goldClasses).forEach(([cls, count]) => {
   console.log(`  - ${cls}: ${count} cells`);
+});
+
+console.log('\nLULCMAP classes:');
+const lulcClasses = {};
+lulcReprojected.features.forEach(f => {
+  const cls = f.properties.ClassName;
+  lulcClasses[cls] = (lulcClasses[cls] || 0) + 1;
+});
+Object.entries(lulcClasses).forEach(([cls, count]) => {
+  console.log(`  - ${cls}: ${count} features`);
 });
