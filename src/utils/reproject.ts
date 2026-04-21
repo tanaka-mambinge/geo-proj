@@ -46,46 +46,49 @@ function reprojectMultiPolygon(multipolygon: number[][][][]): number[][][][] {
 export function reprojectGeoJSON(geojson: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
   console.log('Reprojecting GeoJSON with', geojson.features.length, 'features');
 
-  const result: GeoJSON.FeatureCollection = {
-    type: 'FeatureCollection',
-    crs: {
-      type: 'name',
-      properties: {
-        name: 'urn:ogc:def:crs:OGC:1.3:CRS84'  // WGS84 (longitude, latitude)
-      }
-    },
-    features: geojson.features.map((feature): GeoJSON.Feature => {
-      const geometry = feature.geometry;
-      
-      if (geometry.type === 'MultiPolygon') {
-        const multiPolygon: GeoJSON.MultiPolygon = {
-          type: 'MultiPolygon',
-          coordinates: reprojectMultiPolygon(geometry.coordinates as number[][][][])
-        };
-        return {
-          type: 'Feature',
-          properties: feature.properties,
-          geometry: multiPolygon
-        };
-      } else if (geometry.type === 'Polygon') {
-        const polygon: GeoJSON.Polygon = {
-          type: 'Polygon',
-          coordinates: reprojectPolygon(geometry.coordinates as number[][][])
-        };
-        return {
-          type: 'Feature',
-          properties: feature.properties,
-          geometry: polygon
-        };
-      }
-      
-      // For other geometry types, return as-is
+  const features = geojson.features.map((feature): GeoJSON.Feature => {
+    const geometry = feature.geometry;
+    
+    if (geometry.type === 'MultiPolygon') {
+      const multiPolygon: GeoJSON.MultiPolygon = {
+        type: 'MultiPolygon',
+        coordinates: reprojectMultiPolygon(geometry.coordinates as number[][][][])
+      };
       return {
         type: 'Feature',
         properties: feature.properties,
-        geometry
+        geometry: multiPolygon
       };
-    }),
+    } else if (geometry.type === 'Polygon') {
+      const polygon: GeoJSON.Polygon = {
+        type: 'Polygon',
+        coordinates: reprojectPolygon(geometry.coordinates as number[][][])
+      };
+      return {
+        type: 'Feature',
+        properties: feature.properties,
+        geometry: polygon
+      };
+    }
+    
+    // For other geometry types, return as-is
+    return {
+      type: 'Feature',
+      properties: feature.properties,
+      geometry
+    };
+  });
+
+  // Return with CRS info as extended FeatureCollection
+  const result = {
+    type: 'FeatureCollection' as const,
+    features,
+    crs: {
+      type: 'name' as const,
+      properties: {
+        name: 'urn:ogc:def:crs:OGC:1.3:CRS84'  // WGS84 (longitude, latitude)
+      }
+    }
   };
 
   // Log the first feature's first coordinate to verify
@@ -95,5 +98,5 @@ export function reprojectGeoJSON(geojson: GeoJSON.FeatureCollection): GeoJSON.Fe
     console.log('First reprojected coordinate [lng, lat]:', firstCoord);
   }
 
-  return result;
+  return result as GeoJSON.FeatureCollection;
 }
