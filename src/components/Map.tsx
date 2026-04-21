@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl } from 'react-leaflet';
 import { Feature, GeoJsonObject, Point } from 'geojson';
 import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
 import L from 'leaflet';
@@ -79,7 +79,7 @@ function LayerToggles({
   return (
     <div style={{
       position: 'absolute',
-      top: '80px',
+      top: '180px',
       right: '20px',
       background: 'white',
       padding: '12px 16px',
@@ -334,11 +334,33 @@ export function Map() {
 
   return (
     <MapContainer center={[-17.5, 31.5]} zoom={8} style={{ height: '100vh', width: '100%' }}>
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
+      <LayersControl position="topright">
+        {/* Base Layers */}
+        <LayersControl.BaseLayer checked name="OpenStreetMap">
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+        </LayersControl.BaseLayer>
+        
+        <LayersControl.BaseLayer name="Satellite (ESRI)">
+          <TileLayer
+            attribution='Tiles &copy; Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        </LayersControl.BaseLayer>
+        
+        <LayersControl.BaseLayer name="Topographic">
+          <TileLayer
+            attribution='Tiles &copy; Esri'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={19}
+          />
+        </LayersControl.BaseLayer>
+      </LayersControl>
       
+      {/* Overlay Layers */}
       {showFarms && (
         <GeoJSON
           data={farmsData as GeoJsonObject}
