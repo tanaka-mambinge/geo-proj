@@ -24,6 +24,20 @@ interface LULCProperties {
   ClassName: string;
 }
 
+interface LULCComplianceInfo {
+  regulation: string;
+  claimStatus: string;
+  decision: string;
+}
+
+type LULCComplianceKey =
+  | 'Croplands'
+  | 'Builtup'
+  | 'Water'
+  | 'Vegetation'
+  | 'Wooded Grasslands'
+  | 'Bareland';
+
 // Color scheme for gold potential (blue → red)
 const goldColorScheme: Record<string, string> = {
   'Very Low Potential': '#1e3a8a',
@@ -41,6 +55,66 @@ const lulcColorScheme: Record<string, string> = {
   'Vegetation': '#22c55e',
   'Wooded Grasslands': '#15803d',
   'Bareland': '#d4d4d4',
+};
+
+const lulcComplianceInfo: Record<LULCComplianceKey, LULCComplianceInfo> = {
+  Croplands: {
+    regulation: "Farmer's permission is required.",
+    claimStatus: 'Confirm with mining Cadastre Register (Mashonaland Central Province)',
+    decision: 'Proceed with permission + Cadastre Verification Required',
+  },
+  Builtup: {
+    regulation: 'This area is strictly restricted.',
+    claimStatus: 'Confirm with local authorities (Mashonaland Central Province)',
+    decision: 'Restricted Area (Government Exemption + EIA Approval)',
+  },
+  Water: {
+    regulation: 'Mining is prohibited in water bodies.',
+    claimStatus: 'Confirm with local authorities (Mashonaland Central Province)',
+    decision: 'No-Go Zone (EIA + Water Authority Approval Required)',
+  },
+  Vegetation: {
+    regulation: 'Environmental protection law applies; clearance requires EIA approval.',
+    claimStatus: 'Confirm with Environmental Agency (Mashonaland Central Province)',
+    decision: 'Proceed with permission + EIA Approval',
+  },
+  'Wooded Grasslands': {
+    regulation: 'Environmental protection law applies; clearance requires EIA approval.',
+    claimStatus: 'Confirm with Environmental Agency (Mashonaland Central Province)',
+    decision: 'Proceed with permission + EIA Approval',
+  },
+  Bareland: {
+    regulation: 'This area is open for prospecting.',
+    claimStatus: 'No additional permissions required',
+    decision: 'Proceed with permission + Cadastre Verification Required',
+  },
+};
+
+const normalizeLULCClassName = (className: string) =>
+  className.toLowerCase().replace(/\s+/g, ' ').trim();
+
+const getLULCComplianceInfo = (className: string) => {
+  const normalized = normalizeLULCClassName(className);
+
+  switch (normalized) {
+    case 'croplands':
+      return lulcComplianceInfo.Croplands;
+    case 'builtup':
+    case 'built up':
+      return lulcComplianceInfo.Builtup;
+    case 'water':
+      return lulcComplianceInfo.Water;
+    case 'vegetation':
+      return lulcComplianceInfo.Vegetation;
+    case 'wooded grasslands':
+    case 'wooded grassland':
+    case 'wooded grasland':
+      return lulcComplianceInfo['Wooded Grasslands'];
+    case 'bareland':
+      return lulcComplianceInfo.Bareland;
+    default:
+      return null;
+  }
 };
 
 function MapBounds({ data }: { data: GeoJsonObject }) {
@@ -232,6 +306,7 @@ export function Map() {
     // Land Use Section - Always show if available
     if (lulcProps) {
       const lulcColor = lulcColorScheme[lulcProps.ClassName] || '#22c55e';
+      const compliance = getLULCComplianceInfo(lulcProps.ClassName);
       html += `
         <p style="margin: 4px 0; color: #374151; font-size: 14px;">
           <strong>🌿 Land Use:</strong> 
@@ -240,6 +315,14 @@ export function Map() {
         <p style="margin: 4px 0; color: #6b7280; font-size: 13px;">
           <strong>Land Area:</strong> ${lulcProps.Area_Ha.toLocaleString()} ha
         </p>
+        ${compliance ? `
+          <div style="margin: 8px 0 0 0; padding: 10px 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <p style="margin: 0 0 6px 0; color: #111827; font-size: 13px; font-weight: 600;">Regulation</p>
+            <p style="margin: 0 0 8px 0; color: #374151; font-size: 13px; line-height: 1.4;">${compliance.regulation}</p>
+            <p style="margin: 0 0 4px 0; color: #6b7280; font-size: 13px;"><strong>Claim Status:</strong> ${compliance.claimStatus}</p>
+            <p style="margin: 0; color: #6b7280; font-size: 13px;"><strong>Decision:</strong> ${compliance.decision}</p>
+          </div>
+        ` : ''}
         <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 10px 0;" />
       `;
     }
