@@ -308,6 +308,7 @@ export function Map() {
   const [showGold, setShowGold] = useState(true);
   const [showLULC, setShowLULC] = useState(false);
   const [polygonReport, setPolygonReport] = useState<PolygonReport | null>(null);
+  const [polygonNeedsReport, setPolygonNeedsReport] = useState(false);
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [isEditingPolygon, setIsEditingPolygon] = useState(false);
@@ -341,6 +342,7 @@ export function Map() {
     drawnItemsRef.current?.clearLayers();
     setSelectedPolygon(null);
     setPolygonReport(null);
+    setPolygonNeedsReport(false);
     setIsDrawingPolygon(false);
     setIsEditingPolygon(false);
   }, [mapInstance, setSelectedPolygon]);
@@ -383,6 +385,8 @@ export function Map() {
 
       event.layer.pm.disable();
       setSelectedPolygon(event.layer);
+      setPolygonReport(null);
+      setPolygonNeedsReport(true);
       setIsDrawingPolygon(false);
     };
 
@@ -400,6 +404,7 @@ export function Map() {
       if (drawnItems.getLayers().length === 0) {
         setSelectedPolygon(null);
         setPolygonReport(null);
+        setPolygonNeedsReport(false);
         setIsEditingPolygon(false);
       }
     };
@@ -567,17 +572,16 @@ export function Map() {
     }
 
     const handleEdit = (event: GeomanEditEvent) => {
-      updatePolygonReportFromLayer(event.layer);
+      setPolygonNeedsReport(true);
       setIsEditingPolygon(isLeafletPolygonLayer(event.layer) ? event.layer.pm.enabled() : false);
     };
 
     selectedPolygon.on('pm:edit', handleEdit);
-    updatePolygonReportFromLayer(selectedPolygon);
 
     return () => {
       selectedPolygon.off('pm:edit', handleEdit);
     };
-  }, [polygonReport, updatePolygonReportFromLayer]);
+  }, [selectedPolygonRef.current]);
 
   const getFarmStyle = (feature?: Feature) => {
     const status = (feature?.properties as FarmProperties)?.STATUS;
@@ -803,12 +807,21 @@ export function Map() {
     if (selectedPolygon.pm.enabled()) {
       selectedPolygon.pm.disable();
       setIsEditingPolygon(false);
-      updatePolygonReportFromLayer(selectedPolygon);
       return;
     }
 
     selectedPolygon.pm.enable({ allowSelfIntersection: false });
     setIsEditingPolygon(true);
+  }, []);
+
+  const generatePolygonReport = useCallback(() => {
+    const selectedPolygon = selectedPolygonRef.current;
+    if (!selectedPolygon) {
+      return;
+    }
+
+    updatePolygonReportFromLayer(selectedPolygon);
+    setPolygonNeedsReport(false);
   }, [updatePolygonReportFromLayer]);
 
   const renderOverlayLayers = (interactive: boolean, pane?: string) => (
@@ -880,12 +893,20 @@ export function Map() {
               <SidebarButton onClick={startPolygonDrawing} disabled={!mapInstance || isDrawingPolygon}>
                 {isDrawingPolygon ? 'Drawing in progress...' : 'Start polygon drawing'}
               </SidebarButton>
+              <SidebarButton onClick={generatePolygonReport} disabled={!selectedPolygonRef.current || isDrawingPolygon}>
+                Generate report
+              </SidebarButton>
               <SidebarButton onClick={togglePolygonEditing} disabled={!selectedPolygonRef.current || isDrawingPolygon}>
                 {isEditingPolygon ? 'Finish editing polygon' : 'Edit polygon'}
               </SidebarButton>
               <SidebarButton onClick={clearPolygonSelection} disabled={!selectedPolygonRef.current && !polygonReport}>
                 Clear polygon
               </SidebarButton>
+              {selectedPolygonRef.current && polygonNeedsReport ? (
+                <p className="map-sidebar-muted" style={{ marginTop: 0 }}>
+                  Polygon changed. Generate report when you want to refresh the analysis.
+                </p>
+              ) : null}
             </div>
           ) : null}
         </section>
