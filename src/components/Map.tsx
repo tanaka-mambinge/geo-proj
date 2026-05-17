@@ -1,11 +1,10 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GeoJSON, LayersControl, MapContainer, Pane, TileLayer, useMap } from 'react-leaflet';
+import { GeoJSON, LayersControl, MapContainer, Pane, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import { Feature, GeoJsonObject, MultiPolygon, Point, Polygon } from 'geojson';
 import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
-import area from '@turf/area';
-import intersect from '@turf/intersect';
-import { featureCollection } from '@turf/helpers';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import L from 'leaflet';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
@@ -49,6 +48,27 @@ interface PolygonReport {
   goldAreas: AreaBreakdownItem[];
   landUseAreas: AreaBreakdownItem[];
   farmAreas: AreaBreakdownItem[];
+}
+
+interface RpcReportItem {
+  label: string;
+  area_sqm: number;
+  status?: string;
+}
+
+interface RpcPolygonReport {
+  selected_area_sqm: number;
+  gold_areas: RpcReportItem[];
+  land_use_areas: RpcReportItem[];
+  farm_areas: RpcReportItem[];
+  timings?: {
+    db_duration_ms?: number;
+  };
+}
+
+interface ExportableFeatureCollection {
+  type: 'FeatureCollection';
+  features: GeoJSON.Feature[];
 }
 
 interface GeomanCreateEvent {
@@ -152,6 +172,13 @@ const formatHectares = (value: number) => `${(value / 10_000).toLocaleString(und
 
 const formatAreaSummary = (value: number) => `${formatHectares(value)} (${formatSquareMeters(value)})`;
 
+const SUPABASE_RPC_URL =
+  import.meta.env.VITE_SUPABASE_RPC_URL || 'http://127.0.0.1:54321/rest/v1/rpc/generate_polygon_report';
+
+const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+
 const isPolygonFeature = (
   feature: Feature | GeoJSON.Feature<GeoJSON.Geometry>
 ): feature is Feature<Polygon | MultiPolygon> =>
@@ -159,12 +186,100 @@ const isPolygonFeature = (
 
 const isLeafletPolygonLayer = (layer: L.Layer): layer is L.Polygon => layer instanceof L.Polygon;
 
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const addBreakdownToPdf = (
+  doc: jsPDF,
+  title: string,
+  items: AreaBreakdownItem[],
+  startY: number,
+  emptyMessage: string
+) => {
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = startY;
+
+  const ensureSpace = (required: number) => {
+    if (y + required <= pageHeight - 20) {
+      return;
+    }
+
+    doc.addPage();
+    y = 20;
+  };
+
+  ensureSpace(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(title, 14, y);
+  y += 8;
+
+  if (items.length === 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(emptyMessage, 14, y);
+    return y + 8;
+  }
+
+  items.forEach((item) => {
+    ensureSpace(item.compliance ? 28 : 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(item.label, 14, y);
+    doc.text(formatAreaSummary(item.areaSqMeters), 195, y, { align: 'right' });
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    if (item.secondaryLabel) {
+      doc.text(item.secondaryLabel, 14, y);
+      y += 5;
+    }
+    if (item.compliance) {
+      const complianceLines = doc.splitTextToSize(
+        `Regulation: ${item.compliance.regulation}\nClaim Status: ${item.compliance.claimStatus}\nDecision: ${item.compliance.decision}`,
+        180
+      );
+      doc.text(complianceLines, 14, y);
+      y += complianceLines.length * 5;
+    }
+    y += 4;
+  });
+
+  return y;
+};
+
 function MapReadyBridge({ onReady }: { onReady: (map: L.Map) => void }) {
   const map = useMap();
 
   useEffect(() => {
     onReady(map);
   }, [map, onReady]);
+
+  return null;
+}
+
+function PointInspectHandler({
+  interactionMode,
+  onInspect,
+}: {
+  interactionMode: InteractionMode;
+  onInspect: (event: L.LeafletMouseEvent) => void;
+}) {
+  useMapEvents({
+    click: (event) => {
+      if (interactionMode !== 'point') {
+        return;
+      }
+
+      onInspect(event);
+    },
+  });
 
   return null;
 }
@@ -309,6 +424,11 @@ export function Map() {
   const [showLULC, setShowLULC] = useState(false);
   const [polygonReport, setPolygonReport] = useState<PolygonReport | null>(null);
   const [polygonNeedsReport, setPolygonNeedsReport] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [polygonReportError, setPolygonReportError] = useState<string | null>(null);
+  const [polygonExportError, setPolygonExportError] = useState<string | null>(null);
+  const [lastReportDbDurationMs, setLastReportDbDurationMs] = useState<number | null>(null);
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [isEditingPolygon, setIsEditingPolygon] = useState(false);
@@ -343,11 +463,20 @@ export function Map() {
     setSelectedPolygon(null);
     setPolygonReport(null);
     setPolygonNeedsReport(false);
+    setPolygonReportError(null);
+    setPolygonExportError(null);
+    setLastReportDbDurationMs(null);
+    setIsGeneratingReport(false);
+    setIsExportingPdf(false);
     setIsDrawingPolygon(false);
     setIsEditingPolygon(false);
   }, [mapInstance, setSelectedPolygon]);
 
   useEffect(() => {
+    setPolygonReport(null);
+    setPolygonReportError(null);
+    setPolygonExportError(null);
+
     if (interactionMode === 'point') {
       mapInstance?.pm.disableDraw();
       selectedPolygonRef.current?.pm.disable();
@@ -387,6 +516,9 @@ export function Map() {
       setSelectedPolygon(event.layer);
       setPolygonReport(null);
       setPolygonNeedsReport(true);
+      setPolygonReportError(null);
+      setPolygonExportError(null);
+      setLastReportDbDurationMs(null);
       setIsDrawingPolygon(false);
     };
 
@@ -405,6 +537,9 @@ export function Map() {
         setSelectedPolygon(null);
         setPolygonReport(null);
         setPolygonNeedsReport(false);
+        setPolygonReportError(null);
+        setPolygonExportError(null);
+        setLastReportDbDurationMs(null);
         setIsEditingPolygon(false);
       }
     };
@@ -440,6 +575,20 @@ export function Map() {
     return null;
   }, []);
 
+  const findContainingGold = useCallback((lng: number, lat: number): Feature | null => {
+    const point: Point = { type: 'Point', coordinates: [lng, lat] };
+    for (const gold of goldRef.current.features) {
+      try {
+        if (booleanPointInPolygon(point, gold.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon)) {
+          return gold as Feature;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }, []);
+
   const findContainingLULC = useCallback((lng: number, lat: number): Feature | null => {
     const point: Point = { type: 'Point', coordinates: [lng, lat] };
     for (const lulc of lulcRef.current.features) {
@@ -454,116 +603,72 @@ export function Map() {
     return null;
   }, []);
 
-  const buildPolygonReport = useCallback((selection: Feature<Polygon | MultiPolygon>): PolygonReport => {
-    const goldAreas = new globalThis.Map<string, AreaBreakdownItem>();
-    const landUseAreas = new globalThis.Map<string, AreaBreakdownItem>();
-    const farmAreas = new globalThis.Map<string, AreaBreakdownItem>();
-
-    const accumulateOverlap = (
-      source: GeoJSON.FeatureCollection,
-      target: Map<string, AreaBreakdownItem>,
-      getKey: (feature: Feature<Polygon | MultiPolygon>) => string,
-      createItem: (feature: Feature<Polygon | MultiPolygon>, overlapArea: number) => AreaBreakdownItem
-    ) => {
-      for (const rawFeature of source.features) {
-        if (!isPolygonFeature(rawFeature)) {
-          continue;
-        }
-
-        try {
-          const overlap = intersect(featureCollection([selection, rawFeature]));
-          if (!overlap) {
-            continue;
-          }
-
-          const overlapArea = area(overlap);
-          if (overlapArea <= 0) {
-            continue;
-          }
-
-          const key = getKey(rawFeature);
-          const existing = target.get(key);
-          if (existing) {
-            existing.areaSqMeters += overlapArea;
-          } else {
-            target.set(key, createItem(rawFeature, overlapArea));
-          }
-        } catch {
-          continue;
-        }
-      }
-    };
-
-    accumulateOverlap(
-      goldRef.current,
-      goldAreas,
-      (feature) => ((feature.properties as GoldProperties)?.Class || 'Unknown'),
-      (feature, overlapArea) => {
-        const properties = feature.properties as GoldProperties;
+  const mapRpcItems = useCallback((items: RpcReportItem[], type: 'gold' | 'landUse' | 'farm'): AreaBreakdownItem[] => {
+    return items.map((item) => {
+      if (type === 'gold') {
         return {
-          label: properties.Class || 'Unknown',
-          areaSqMeters: overlapArea,
-          color: goldColorScheme[properties.Class] || '#6b7280',
+          label: item.label || 'Unknown',
+          areaSqMeters: item.area_sqm,
+          color: goldColorScheme[item.label] || '#6b7280',
         };
       }
-    );
 
-    accumulateOverlap(
-      lulcRef.current,
-      landUseAreas,
-      (feature) => ((feature.properties as LULCProperties)?.ClassName || 'Unknown'),
-      (feature, overlapArea) => {
-        const properties = feature.properties as LULCProperties;
+      if (type === 'landUse') {
         return {
-          label: properties.ClassName || 'Unknown',
-          areaSqMeters: overlapArea,
-          color: lulcColorScheme[properties.ClassName] || '#9ca3af',
-          compliance: getLULCComplianceInfo(properties.ClassName),
+          label: item.label || 'Unknown',
+          areaSqMeters: item.area_sqm,
+          color: lulcColorScheme[item.label] || '#9ca3af',
+          compliance: getLULCComplianceInfo(item.label || ''),
         };
       }
-    );
 
-    accumulateOverlap(
-      farmsRef.current,
-      farmAreas,
-      (feature) => {
-        const properties = feature.properties as FarmProperties;
-        return `${properties.NAME || 'Unnamed'}-${properties.STATUS}`;
-      },
-      (feature, overlapArea) => {
-        const properties = feature.properties as FarmProperties;
-        return {
-          label: properties.NAME || 'Unnamed',
-          areaSqMeters: overlapArea,
-          secondaryLabel: properties.STATUS,
-          color: properties.STATUS === 'Commercial' ? '#16a34a' : '#2563eb',
-        };
-      }
-    );
-
-    const sortByArea = (items: AreaBreakdownItem[]) => items.sort((left, right) => right.areaSqMeters - left.areaSqMeters);
-
-    return {
-      selectedAreaSqMeters: area(selection),
-      goldAreas: sortByArea(Array.from(goldAreas.values())),
-      landUseAreas: sortByArea(Array.from(landUseAreas.values())),
-      farmAreas: sortByArea(Array.from(farmAreas.values())),
-    };
+      return {
+        label: item.label || 'Unnamed',
+        areaSqMeters: item.area_sqm,
+        secondaryLabel: item.status,
+        color: item.status === 'Commercial' ? '#16a34a' : '#2563eb',
+      };
+    });
   }, []);
 
-  const updatePolygonReportFromLayer = useCallback((layer: L.Layer) => {
+  const fetchPolygonReportFromLayer = useCallback(async (layer: L.Layer) => {
     const toGeoJSONLayer = layer as L.Layer & { toGeoJSON?: () => GeoJSON.Feature };
     if (!toGeoJSONLayer.toGeoJSON) {
-      return;
+      throw new Error('Selected layer cannot be converted to GeoJSON.');
     }
 
     const feature = toGeoJSONLayer.toGeoJSON();
     if (!isPolygonFeature(feature)) {
-      return;
+      throw new Error('Selected geometry is not a polygon.');
     }
 
-    setPolygonReport(buildPolygonReport(feature));
-  }, [buildPolygonReport]);
+    const response = await fetch(SUPABASE_RPC_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        input_geometry: feature.geometry,
+        input_srid: 4326,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Failed to generate polygon report.');
+    }
+
+    const rpcReport = (await response.json()) as RpcPolygonReport;
+    setLastReportDbDurationMs(rpcReport.timings?.db_duration_ms ?? null);
+    setPolygonReport({
+      selectedAreaSqMeters: rpcReport.selected_area_sqm,
+      goldAreas: mapRpcItems(rpcReport.gold_areas || [], 'gold'),
+      landUseAreas: mapRpcItems(rpcReport.land_use_areas || [], 'landUse'),
+      farmAreas: mapRpcItems(rpcReport.farm_areas || [], 'farm'),
+    });
+  }, [mapRpcItems]);
 
   useEffect(() => {
     const selectedPolygon = selectedPolygonRef.current;
@@ -573,6 +678,8 @@ export function Map() {
 
     const handleEdit = (event: GeomanEditEvent) => {
       setPolygonNeedsReport(true);
+      setPolygonReportError(null);
+      setPolygonExportError(null);
       setIsEditingPolygon(isLeafletPolygonLayer(event.layer) ? event.layer.pm.enabled() : false);
     };
 
@@ -693,6 +800,27 @@ export function Map() {
     closeActivePopup();
     popupRef.current = L.popup().setLatLng(latlng).setContent(content).openOn(map);
   }, [closeActivePopup]);
+
+  const inspectPoint = useCallback((event: L.LeafletMouseEvent) => {
+    const { lng, lat } = event.latlng;
+    const containingGold = findContainingGold(lng, lat);
+    const containingLULC = findContainingLULC(lng, lat);
+    const containingFarm = findContainingFarm(lng, lat);
+
+    if (!containingGold && !containingLULC && !containingFarm) {
+      return;
+    }
+
+    openPopup(
+      event.latlng,
+      createPopupContent(
+        containingGold ? (containingGold.properties as GoldProperties) : null,
+        containingLULC ? (containingLULC.properties as LULCProperties) : null,
+        containingFarm ? (containingFarm.properties as FarmProperties) : null
+      ),
+      event.target
+    );
+  }, [findContainingFarm, findContainingGold, findContainingLULC, openPopup]);
 
   const onGoldClick = (feature: Feature, layer: L.Layer) => {
     layer.on('click', (event: L.LeafletMouseEvent) => {
@@ -820,9 +948,205 @@ export function Map() {
       return;
     }
 
-    updatePolygonReportFromLayer(selectedPolygon);
-    setPolygonNeedsReport(false);
-  }, [updatePolygonReportFromLayer]);
+    setIsGeneratingReport(true);
+    setPolygonReportError(null);
+
+    void fetchPolygonReportFromLayer(selectedPolygon)
+      .then(() => {
+        setPolygonNeedsReport(false);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Failed to generate polygon report.';
+        setPolygonReportError(message);
+      })
+      .finally(() => {
+        setIsGeneratingReport(false);
+      });
+  }, [fetchPolygonReportFromLayer]);
+
+  const buildExportFeatureCollection = useCallback((): ExportableFeatureCollection | null => {
+    const selectedPolygon = selectedPolygonRef.current;
+    if (!selectedPolygon) {
+      return null;
+    }
+
+    const rawFeature = selectedPolygon.toGeoJSON() as GeoJSON.Feature;
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          ...rawFeature,
+          properties: {
+            ...(rawFeature.properties || {}),
+            source: 'geo-proj',
+            exported_at: new Date().toISOString(),
+            report_generated: Boolean(polygonReport),
+            report_stale: polygonNeedsReport,
+            selected_area_sqm: polygonReport?.selectedAreaSqMeters ?? null,
+          },
+        },
+      ],
+    };
+  }, [polygonNeedsReport, polygonReport]);
+
+  const createExportMapSnapshot = useCallback(async () => {
+    const selectedPolygon = selectedPolygonRef.current;
+    if (!selectedPolygon) {
+      return null;
+    }
+
+    const exportContainer = document.createElement('div');
+    exportContainer.style.position = 'fixed';
+    exportContainer.style.left = '-10000px';
+    exportContainer.style.top = '0';
+    exportContainer.style.width = '1200px';
+    exportContainer.style.height = '760px';
+    exportContainer.style.background = '#ffffff';
+    document.body.appendChild(exportContainer);
+
+    let exportMap: L.Map | null = null;
+
+    try {
+      exportMap = L.map(exportContainer, {
+        zoomControl: false,
+        attributionControl: false,
+      });
+
+      const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        crossOrigin: true,
+      }).addTo(exportMap);
+
+      const polygonLayer = L.geoJSON(selectedPolygon.toGeoJSON() as GeoJSON.GeoJsonObject, {
+        style: {
+          color: '#111827',
+          weight: 3,
+          fillColor: '#93c5fd',
+          fillOpacity: 0.12,
+        },
+      }).addTo(exportMap);
+
+      const bounds = polygonLayer.getBounds();
+      if (bounds.isValid()) {
+        exportMap.invalidateSize();
+        exportMap.fitBounds(bounds, {
+          paddingTopLeft: [140, 120],
+          paddingBottomRight: [140, 120],
+          animate: false,
+        });
+      }
+
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) {
+            return;
+          }
+          done = true;
+          resolve();
+        };
+
+        const onMoveEnd = () => {
+          exportMap?.off('moveend', onMoveEnd);
+          window.setTimeout(finish, 450);
+        };
+
+        exportMap?.once('moveend', onMoveEnd);
+        tileLayer.once('load', () => {
+          window.setTimeout(finish, 450);
+        });
+        window.setTimeout(finish, 2200);
+      });
+
+      const canvas = await html2canvas(exportContainer, {
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        scale: 1,
+        logging: false,
+      });
+
+      return {
+        dataUrl: canvas.toDataURL('image/png'),
+        width: canvas.width,
+        height: canvas.height,
+      };
+    } finally {
+      if (exportMap) {
+        exportMap.remove();
+      }
+      exportContainer.remove();
+    }
+  }, [getFarmStyle, getGoldStyle, getLULCStyle, showFarms, showGold, showLULC]);
+
+  const downloadExportBundle = useCallback(async () => {
+    if (!polygonReport || !mapInstance) {
+      return;
+    }
+
+    setIsExportingPdf(true);
+    setPolygonExportError(null);
+
+    try {
+      const exportFeatureCollection = buildExportFeatureCollection();
+      if (!exportFeatureCollection) {
+        throw new Error('No polygon available to export.');
+      }
+
+      const createdAt = new Date();
+      const fileStem = `polygon-export-${createdAt.toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+
+      downloadBlob(
+        new Blob([JSON.stringify(exportFeatureCollection, null, 2)], { type: 'application/geo+json' }),
+        `${fileStem}.geojson`
+      );
+
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      let y = 16;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(18);
+      doc.text('Polygon Analysis Report', 14, y);
+      y += 8;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text(`Generated: ${createdAt.toLocaleString()}`, 14, y);
+      y += 6;
+      doc.text(`Selected area: ${formatAreaSummary(polygonReport.selectedAreaSqMeters)}`, 14, y);
+      y += 6;
+      doc.text('Geometry export CRS: EPSG:4326 (GeoJSON), analysis CRS: EPSG:32736', 14, y);
+      y += 6;
+      if (lastReportDbDurationMs !== null) {
+        doc.text(`Report generation DB duration: ${lastReportDbDurationMs.toFixed(2)} ms`, 14, y);
+        y += 6;
+      }
+
+      try {
+        const snapshot = await createExportMapSnapshot();
+        if (!snapshot) {
+          throw new Error('Map snapshot unavailable.');
+        }
+
+        const imageWidth = 182;
+        const imageHeight = (snapshot.height * imageWidth) / snapshot.width;
+        doc.addImage(snapshot.dataUrl, 'PNG', 14, y, imageWidth, imageHeight);
+        y += imageHeight + 10;
+      } catch {
+        doc.setFont('helvetica', 'italic');
+        doc.text('Map snapshot unavailable. The PDF still includes the report tables.', 14, y);
+        y += 8;
+      }
+
+      y = addBreakdownToPdf(doc, 'Gold potential overlap', polygonReport.goldAreas, y, 'No gold-potential polygons overlap this selection.') + 4;
+      y = addBreakdownToPdf(doc, 'Land-use overlap', polygonReport.landUseAreas, y, 'No land-use polygons overlap this selection.') + 4;
+      y = addBreakdownToPdf(doc, 'Farm overlap', polygonReport.farmAreas, y, 'No farms overlap this selection.') + 4;
+
+      doc.save(`${fileStem}.pdf`);
+    } catch (error) {
+      setPolygonExportError(error instanceof Error ? error.message : 'Failed to create PDF report.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [buildExportFeatureCollection, createExportMapSnapshot, lastReportDbDurationMs, mapInstance, polygonReport]);
 
   const renderOverlayLayers = (interactive: boolean, pane?: string) => (
     <>
@@ -864,7 +1188,7 @@ export function Map() {
   return (
     <div className="map-shell">
       <aside className="map-sidebar">
-        <div className="map-sidebar-section">
+        <div className="map-sidebar-section map-sidebar-hero">
           <div>
             <p className="map-sidebar-eyebrow">Geo Inspector</p>
             <h1 className="map-sidebar-heading">Area and point analysis</h1>
@@ -888,22 +1212,37 @@ export function Map() {
           </div>
 
           {interactionMode === 'polygon' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="map-sidebar-stack">
               <p className="map-sidebar-muted">Start drawing, then double-click to finish the polygon. You can refine the selection afterward by toggling edit mode.</p>
-              <SidebarButton onClick={startPolygonDrawing} disabled={!mapInstance || isDrawingPolygon}>
-                {isDrawingPolygon ? 'Drawing in progress...' : 'Start polygon drawing'}
+              <div className="map-sidebar-actions">
+                <SidebarButton onClick={startPolygonDrawing} disabled={!mapInstance || isDrawingPolygon}>
+                  {isDrawingPolygon ? 'Drawing in progress...' : 'Start polygon drawing'}
+                </SidebarButton>
+                <SidebarButton onClick={generatePolygonReport} disabled={!selectedPolygonRef.current || isDrawingPolygon || isGeneratingReport}>
+                  {isGeneratingReport ? 'Generating report...' : 'Generate report'}
+                </SidebarButton>
+                <SidebarButton onClick={togglePolygonEditing} disabled={!selectedPolygonRef.current || isDrawingPolygon}>
+                  {isEditingPolygon ? 'Finish editing polygon' : 'Edit polygon'}
+                </SidebarButton>
+                <SidebarButton onClick={clearPolygonSelection} disabled={!selectedPolygonRef.current && !polygonReport}>
+                  Clear polygon
+                </SidebarButton>
+              </div>
+              <SidebarButton onClick={downloadExportBundle} disabled={!polygonReport || polygonNeedsReport || isGeneratingReport || isExportingPdf}>
+                {isExportingPdf ? 'Preparing exports...' : 'Download exports'}
               </SidebarButton>
-              <SidebarButton onClick={generatePolygonReport} disabled={!selectedPolygonRef.current || isDrawingPolygon}>
-                Generate report
-              </SidebarButton>
-              <SidebarButton onClick={togglePolygonEditing} disabled={!selectedPolygonRef.current || isDrawingPolygon}>
-                {isEditingPolygon ? 'Finish editing polygon' : 'Edit polygon'}
-              </SidebarButton>
-              <SidebarButton onClick={clearPolygonSelection} disabled={!selectedPolygonRef.current && !polygonReport}>
-                Clear polygon
-              </SidebarButton>
+              {polygonReportError ? (
+                <p className="map-sidebar-status map-sidebar-status-error">
+                  {polygonReportError}
+                </p>
+              ) : null}
+              {polygonExportError ? (
+                <p className="map-sidebar-status map-sidebar-status-error">
+                  {polygonExportError}
+                </p>
+              ) : null}
               {selectedPolygonRef.current && polygonNeedsReport ? (
-                <p className="map-sidebar-muted" style={{ marginTop: 0 }}>
+                <p className="map-sidebar-status">
                   Polygon changed. Generate report when you want to refresh the analysis.
                 </p>
               ) : null}
@@ -940,7 +1279,7 @@ export function Map() {
                 <h2 className="map-sidebar-title">Polygon report</h2>
                 <p className="map-sidebar-muted">Overlap totals are calculated from the exact area shared between your polygon and each map layer.</p>
               </div>
-              <div style={{ padding: '12px', borderRadius: '10px', background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+              <div className="map-sidebar-report-card">
                 <p style={{ margin: 0, fontSize: '12px', color: '#1d4ed8', fontWeight: 700 }}>Selected area</p>
                 <p style={{ margin: '6px 0 0 0', fontSize: '14px', color: '#111827', fontWeight: 600 }}>{formatAreaSummary(polygonReport.selectedAreaSqMeters)}</p>
               </div>
@@ -956,6 +1295,7 @@ export function Map() {
       <div className="map-canvas-panel">
         <MapContainer center={[-17.5, 31.5]} zoom={8} className="map-canvas">
           <MapReadyBridge onReady={setMapInstance} />
+          <PointInspectHandler interactionMode={interactionMode} onInspect={inspectPoint} />
 
           <LayersControl position="topright">
             <LayersControl.BaseLayer checked name="OpenStreetMap">
