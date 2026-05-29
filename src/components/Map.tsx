@@ -1,16 +1,11 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GeoJSON, LayersControl, MapContainer, Pane, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import { Feature, GeoJsonObject, MultiPolygon, Point, Polygon } from 'geojson';
-import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
-import html2canvas from 'html2canvas';
+import { LayersControl, MapContainer, Pane, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Feature, MultiPolygon, Point, Polygon } from 'geojson';
 import { jsPDF } from 'jspdf';
 import L from 'leaflet';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
-import farmsData from '../data/farms-wgs84.json';
-import goldData from '../data/gold-potential-wgs84.json';
-import lulcData from '../data/lulc-wgs84.json';
 
 interface FarmProperties {
   NAME: string | null;
@@ -64,6 +59,23 @@ interface RpcPolygonReport {
   timings?: {
     db_duration_ms?: number;
   };
+}
+
+interface RpcPointInsight {
+  gold: {
+    dn: number;
+    area: number;
+    class: string;
+  } | null;
+  land_use: {
+    dn: number;
+    area_ha: number;
+    class_name: string;
+  } | null;
+  farm: {
+    name: string | null;
+    status: string;
+  } | null;
 }
 
 interface ExportableFeatureCollection {
@@ -175,9 +187,25 @@ const formatAreaSummary = (value: number) => `${formatHectares(value)} (${format
 const SUPABASE_RPC_URL =
   import.meta.env.VITE_SUPABASE_RPC_URL || 'http://127.0.0.1:54321/rest/v1/rpc/generate_polygon_report';
 
+const SUPABASE_POINT_RPC_URL =
+  import.meta.env.VITE_SUPABASE_POINT_RPC_URL || 'http://127.0.0.1:54321/rest/v1/rpc/generate_point_insight';
+
 const SUPABASE_ANON_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+
+const STUDY_AREA_BOUNDS: [[number, number], [number, number]] = [
+  [-17.527702197260002, 31.345144218345418],
+  [-16.822900267188242, 32.01250999308711],
+];
+
+const TILE_LAYER_OPTIONS = {
+  bounds: STUDY_AREA_BOUNDS,
+  maxNativeZoom: 14,
+  maxZoom: 18,
+  minZoom: 8,
+  opacity: 0.9,
+};
 
 const isPolygonFeature = (
   feature: Feature | GeoJSON.Feature<GeoJSON.Geometry>
@@ -284,20 +312,15 @@ function PointInspectHandler({
   return null;
 }
 
-function MapBounds({ data }: { data: GeoJsonObject }) {
+function MapBounds() {
   const map = useMap();
 
   useEffect(() => {
-    try {
-      const layer = L.geoJSON(data as GeoJSON.GeoJsonObject);
-      const bounds = layer.getBounds();
-      if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [30, 30] });
-      }
-    } catch (error) {
-      console.error('Error calculating bounds:', error);
+    const bounds = L.latLngBounds(STUDY_AREA_BOUNDS);
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [30, 30] });
     }
-  }, [map, data]);
+  }, [map]);
 
   return null;
 }
@@ -433,17 +456,9 @@ export function Map() {
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [isEditingPolygon, setIsEditingPolygon] = useState(false);
 
-  const farmsRef = useRef<GeoJSON.FeatureCollection>(farmsData as GeoJSON.FeatureCollection);
-  const goldRef = useRef<GeoJSON.FeatureCollection>(goldData as GeoJSON.FeatureCollection);
-  const lulcRef = useRef<GeoJSON.FeatureCollection>(lulcData as GeoJSON.FeatureCollection);
   const popupRef = useRef<L.Popup | null>(null);
-  const interactionModeRef = useRef<InteractionMode>('point');
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const selectedPolygonRef = useRef<L.Polygon | null>(null);
-
-  useEffect(() => {
-    interactionModeRef.current = interactionMode;
-  }, [interactionMode]);
 
   const closeActivePopup = useCallback(() => {
     if (popupRef.current) {
@@ -561,48 +576,6 @@ export function Map() {
     };
   }, [mapInstance, setSelectedPolygon]);
 
-  const findContainingFarm = useCallback((lng: number, lat: number): Feature | null => {
-    const point: Point = { type: 'Point', coordinates: [lng, lat] };
-    for (const farm of farmsRef.current.features) {
-      try {
-        if (booleanPointInPolygon(point, farm.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon)) {
-          return farm;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }, []);
-
-  const findContainingGold = useCallback((lng: number, lat: number): Feature | null => {
-    const point: Point = { type: 'Point', coordinates: [lng, lat] };
-    for (const gold of goldRef.current.features) {
-      try {
-        if (booleanPointInPolygon(point, gold.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon)) {
-          return gold as Feature;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }, []);
-
-  const findContainingLULC = useCallback((lng: number, lat: number): Feature | null => {
-    const point: Point = { type: 'Point', coordinates: [lng, lat] };
-    for (const lulc of lulcRef.current.features) {
-      try {
-        if (booleanPointInPolygon(point, lulc.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon)) {
-          return lulc;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }, []);
-
   const mapRpcItems = useCallback((items: RpcReportItem[], type: 'gold' | 'landUse' | 'farm'): AreaBreakdownItem[] => {
     return items.map((item) => {
       if (type === 'gold') {
@@ -690,40 +663,6 @@ export function Map() {
     };
   }, [selectedPolygonRef.current]);
 
-  const getFarmStyle = (feature?: Feature) => {
-    const status = (feature?.properties as FarmProperties)?.STATUS;
-    return {
-      fillColor: status === 'Commercial' ? '#2ecc71' : '#3498db',
-      weight: 2,
-      opacity: 1,
-      color: '#2c3e50',
-      fillOpacity: 0.4,
-    };
-  };
-
-  const getGoldStyle = (feature?: Feature) => {
-    const goldClass = (feature?.properties as GoldProperties)?.Class;
-    return {
-      fillColor: goldColorScheme[goldClass] || '#6b7280',
-      weight: 1,
-      opacity: 0.8,
-      color: '#1f2937',
-      fillOpacity: 0.6,
-    };
-  };
-
-  const getLULCStyle = (feature?: Feature) => {
-    const className = (feature?.properties as LULCProperties)?.ClassName;
-    return {
-      fillColor: lulcColorScheme[className] || '#9ca3af',
-      weight: 1,
-      opacity: 0.7,
-      color: '#374151',
-      fillOpacity: 0.5,
-      dashArray: '5, 5',
-    };
-  };
-
   const createPopupContent = (
     goldProps: GoldProperties | null,
     lulcProps: LULCProperties | null,
@@ -801,102 +740,56 @@ export function Map() {
     popupRef.current = L.popup().setLatLng(latlng).setContent(content).openOn(map);
   }, [closeActivePopup]);
 
-  const inspectPoint = useCallback((event: L.LeafletMouseEvent) => {
-    const { lng, lat } = event.latlng;
-    const containingGold = findContainingGold(lng, lat);
-    const containingLULC = findContainingLULC(lng, lat);
-    const containingFarm = findContainingFarm(lng, lat);
+  const inspectPoint = useCallback(async (event: L.LeafletMouseEvent) => {
+    const point: Point = { type: 'Point', coordinates: [event.latlng.lng, event.latlng.lat] };
 
-    if (!containingGold && !containingLULC && !containingFarm) {
-      return;
-    }
+    try {
+      const response = await fetch(SUPABASE_POINT_RPC_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          input_point: point,
+          input_srid: 4326,
+        }),
+      });
 
-    openPopup(
-      event.latlng,
-      createPopupContent(
-        containingGold ? (containingGold.properties as GoldProperties) : null,
-        containingLULC ? (containingLULC.properties as LULCProperties) : null,
-        containingFarm ? (containingFarm.properties as FarmProperties) : null
-      ),
-      event.target
-    );
-  }, [findContainingFarm, findContainingGold, findContainingLULC, openPopup]);
-
-  const onGoldClick = (feature: Feature, layer: L.Layer) => {
-    layer.on('click', (event: L.LeafletMouseEvent) => {
-      if (interactionModeRef.current !== 'point') {
-        return;
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to inspect point.');
       }
 
-      const goldProps = feature.properties as GoldProperties;
-      const { lng, lat } = event.latlng;
-      const containingFarm = findContainingFarm(lng, lat);
-      const containingLULC = findContainingLULC(lng, lat);
+      const insight = (await response.json()) as RpcPointInsight;
+      if (!insight.gold && !insight.land_use && !insight.farm) {
+        return;
+      }
 
       openPopup(
         event.latlng,
         createPopupContent(
-          goldProps,
-          containingLULC ? (containingLULC.properties as LULCProperties) : null,
-          containingFarm ? (containingFarm.properties as FarmProperties) : null
+          insight.gold
+            ? { DN: insight.gold.dn, Area: insight.gold.area, Class: insight.gold.class }
+            : null,
+          insight.land_use
+            ? {
+                DN: insight.land_use.dn,
+                Area_Ha: insight.land_use.area_ha,
+                ClassName: insight.land_use.class_name,
+              }
+            : null,
+          insight.farm
+            ? { NAME: insight.farm.name, STATUS: insight.farm.status }
+            : null
         ),
-        event.target._map
+        event.target
       );
-    });
-
-    const pathLayer = layer as L.Path;
-    layer.on('mouseover', () => pathLayer.setStyle({ weight: 3, fillOpacity: 0.8 }));
-    layer.on('mouseout', () => pathLayer.setStyle({ weight: 1, fillOpacity: 0.6 }));
-  };
-
-  const onFarmClick = (feature: Feature, layer: L.Layer) => {
-    const props = feature.properties as FarmProperties;
-    layer.on('click', (event: L.LeafletMouseEvent) => {
-      if (interactionModeRef.current !== 'point') {
-        return;
-      }
-
-      openPopup(
-        event.latlng,
-        `
-          <div style="font-family: system-ui, sans-serif;">
-            <h3 style="margin: 0 0 8px 0; color: #2c3e50;">${props.NAME || 'Unnamed'}</h3>
-            <p style="margin: 0; color: #7f8c8d;">
-              <strong>Status:</strong>
-              <span style="color: ${props.STATUS === 'Commercial' ? '#27ae60' : '#2980b9'}">${props.STATUS}</span>
-            </p>
-          </div>
-        `,
-        event.target._map
-      );
-    });
-  };
-
-  const onLULCClick = (feature: Feature, layer: L.Layer) => {
-    const props = feature.properties as LULCProperties;
-    const classColor = lulcColorScheme[props.ClassName] || '#9ca3af';
-
-    layer.on('click', (event: L.LeafletMouseEvent) => {
-      if (interactionModeRef.current !== 'point') {
-        return;
-      }
-
-      openPopup(
-        event.latlng,
-        `
-          <div style="font-family: system-ui, sans-serif;">
-            <h3 style="margin: 0 0 8px 0; color: ${classColor}; font-size: 16px; font-weight: 600;">
-              ${props.ClassName}
-            </h3>
-            <p style="margin: 4px 0; color: #6b7280; font-size: 13px;">
-              <strong>Area:</strong> ${props.Area_Ha.toLocaleString()} ha
-            </p>
-          </div>
-        `,
-        event.target._map
-      );
-    });
-  };
+    } catch (error) {
+      console.error(error);
+    }
+  }, [openPopup]);
 
   const startPolygonDrawing = useCallback(() => {
     if (!mapInstance || interactionMode !== 'polygon') {
@@ -989,96 +882,8 @@ export function Map() {
     };
   }, [polygonNeedsReport, polygonReport]);
 
-  const createExportMapSnapshot = useCallback(async () => {
-    const selectedPolygon = selectedPolygonRef.current;
-    if (!selectedPolygon) {
-      return null;
-    }
-
-    const exportContainer = document.createElement('div');
-    exportContainer.style.position = 'fixed';
-    exportContainer.style.left = '-10000px';
-    exportContainer.style.top = '0';
-    exportContainer.style.width = '1200px';
-    exportContainer.style.height = '760px';
-    exportContainer.style.background = '#ffffff';
-    document.body.appendChild(exportContainer);
-
-    let exportMap: L.Map | null = null;
-
-    try {
-      exportMap = L.map(exportContainer, {
-        zoomControl: false,
-        attributionControl: false,
-      });
-
-      const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        crossOrigin: true,
-      }).addTo(exportMap);
-
-      const polygonLayer = L.geoJSON(selectedPolygon.toGeoJSON() as GeoJSON.GeoJsonObject, {
-        style: {
-          color: '#111827',
-          weight: 3,
-          fillColor: '#93c5fd',
-          fillOpacity: 0.12,
-        },
-      }).addTo(exportMap);
-
-      const bounds = polygonLayer.getBounds();
-      if (bounds.isValid()) {
-        exportMap.invalidateSize();
-        exportMap.fitBounds(bounds, {
-          paddingTopLeft: [140, 120],
-          paddingBottomRight: [140, 120],
-          animate: false,
-        });
-      }
-
-      await new Promise<void>((resolve) => {
-        let done = false;
-        const finish = () => {
-          if (done) {
-            return;
-          }
-          done = true;
-          resolve();
-        };
-
-        const onMoveEnd = () => {
-          exportMap?.off('moveend', onMoveEnd);
-          window.setTimeout(finish, 450);
-        };
-
-        exportMap?.once('moveend', onMoveEnd);
-        tileLayer.once('load', () => {
-          window.setTimeout(finish, 450);
-        });
-        window.setTimeout(finish, 2200);
-      });
-
-      const canvas = await html2canvas(exportContainer, {
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        scale: 1,
-        logging: false,
-      });
-
-      return {
-        dataUrl: canvas.toDataURL('image/png'),
-        width: canvas.width,
-        height: canvas.height,
-      };
-    } finally {
-      if (exportMap) {
-        exportMap.remove();
-      }
-      exportContainer.remove();
-    }
-  }, [getFarmStyle, getGoldStyle, getLULCStyle, showFarms, showGold, showLULC]);
-
   const downloadExportBundle = useCallback(async () => {
-    if (!polygonReport || !mapInstance) {
+    if (!polygonReport) {
       return;
     }
 
@@ -1120,22 +925,6 @@ export function Map() {
         y += 6;
       }
 
-      try {
-        const snapshot = await createExportMapSnapshot();
-        if (!snapshot) {
-          throw new Error('Map snapshot unavailable.');
-        }
-
-        const imageWidth = 182;
-        const imageHeight = (snapshot.height * imageWidth) / snapshot.width;
-        doc.addImage(snapshot.dataUrl, 'PNG', 14, y, imageWidth, imageHeight);
-        y += imageHeight + 10;
-      } catch {
-        doc.setFont('helvetica', 'italic');
-        doc.text('Map snapshot unavailable. The PDF still includes the report tables.', 14, y);
-        y += 8;
-      }
-
       y = addBreakdownToPdf(doc, 'Gold potential overlap', polygonReport.goldAreas, y, 'No gold-potential polygons overlap this selection.') + 4;
       y = addBreakdownToPdf(doc, 'Land-use overlap', polygonReport.landUseAreas, y, 'No land-use polygons overlap this selection.') + 4;
       y = addBreakdownToPdf(doc, 'Farm overlap', polygonReport.farmAreas, y, 'No farms overlap this selection.') + 4;
@@ -1146,44 +935,7 @@ export function Map() {
     } finally {
       setIsExportingPdf(false);
     }
-  }, [buildExportFeatureCollection, createExportMapSnapshot, lastReportDbDurationMs, mapInstance, polygonReport]);
-
-  const renderOverlayLayers = (interactive: boolean, pane?: string) => (
-    <>
-      {showFarms ? (
-        <GeoJSON
-          key={`farms-${interactive ? 'interactive' : 'static'}`}
-          data={farmsData as GeoJsonObject}
-          style={getFarmStyle}
-          onEachFeature={onFarmClick}
-          interactive={interactive}
-          pane={pane}
-        />
-      ) : null}
-
-      {showLULC ? (
-        <GeoJSON
-          key={`lulc-${interactive ? 'interactive' : 'static'}`}
-          data={lulcData as GeoJsonObject}
-          style={getLULCStyle}
-          onEachFeature={onLULCClick}
-          interactive={interactive}
-          pane={pane}
-        />
-      ) : null}
-
-      {showGold ? (
-        <GeoJSON
-          key={`gold-${interactive ? 'interactive' : 'static'}`}
-          data={goldData as GeoJsonObject}
-          style={getGoldStyle}
-          onEachFeature={onGoldClick}
-          interactive={interactive}
-          pane={pane}
-        />
-      ) : null}
-    </>
-  );
+  }, [buildExportFeatureCollection, lastReportDbDurationMs, polygonReport]);
 
   return (
     <div className="map-shell">
@@ -1322,15 +1074,13 @@ export function Map() {
             </LayersControl.BaseLayer>
           </LayersControl>
 
-          {interactionMode === 'polygon' ? (
-            <Pane name="analysis-overlay-pane" style={{ zIndex: 350, pointerEvents: 'none' }}>
-              {renderOverlayLayers(false, 'analysis-overlay-pane')}
-            </Pane>
-          ) : (
-            renderOverlayLayers(true)
-          )}
+          <Pane name="analysis-overlay-pane" style={{ zIndex: 350, pointerEvents: 'none' }}>
+            {showFarms ? <TileLayer url="/tiles/farms/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
+            {showGold ? <TileLayer url="/tiles/gold/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
+            {showLULC ? <TileLayer url="/tiles/lulc/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
+          </Pane>
 
-          <MapBounds data={farmsData as GeoJsonObject} />
+          <MapBounds />
         </MapContainer>
       </div>
     </div>
