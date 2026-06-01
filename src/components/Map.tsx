@@ -94,6 +94,8 @@ interface GeomanEditEvent {
 
 type InteractionMode = 'point' | 'polygon';
 
+type OverlayOpacityKey = 'farms' | 'gold' | 'lulc';
+
 type LULCComplianceKey =
   | 'Croplands'
   | 'Builtup'
@@ -119,35 +121,37 @@ const lulcColorScheme: Record<string, string> = {
   Bareland: '#d4d4d4',
 };
 
+const CLAIM_STATUS_TEXT = 'Confirm with mining cadastre register (Mashonaland Central Province)';
+
 const lulcComplianceInfo: Record<LULCComplianceKey, LULCComplianceInfo> = {
   Croplands: {
     regulation: "Farmer's permission is required.",
-    claimStatus: 'Confirm with mining Cadastre Register (Mashonaland Central Province)',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'Proceed with permission + Cadastre Verification Required',
   },
   Builtup: {
     regulation: 'This area is strictly restricted.',
-    claimStatus: 'Confirm with local authorities (Mashonaland Central Province)',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'Restricted Area (Government Exemption + EIA Approval)',
   },
   Water: {
     regulation: 'Mining is prohibited in water bodies.',
-    claimStatus: 'Confirm with local authorities (Mashonaland Central Province)',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'No-Go Zone (EIA + Water Authority Approval Required)',
   },
   Vegetation: {
     regulation: 'Environmental protection law applies; clearance requires EIA approval.',
-    claimStatus: 'Confirm with Environmental Agency (Mashonaland Central Province)',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'Proceed with permission + EIA Approval',
   },
   'Wooded Grasslands': {
     regulation: 'Environmental protection law applies; clearance requires EIA approval.',
-    claimStatus: 'Confirm with Environmental Agency (Mashonaland Central Province)',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'Proceed with permission + EIA Approval',
   },
   Bareland: {
     regulation: 'This area is open for prospecting.',
-    claimStatus: 'No additional permissions required',
+    claimStatus: CLAIM_STATUS_TEXT,
     decision: 'Proceed with permission + Cadastre Verification Required',
   },
 };
@@ -445,6 +449,11 @@ export function Map() {
   const [showFarms, setShowFarms] = useState(true);
   const [showGold, setShowGold] = useState(true);
   const [showLULC, setShowLULC] = useState(false);
+  const [overlayOpacity, setOverlayOpacity] = useState<Record<OverlayOpacityKey, number>>({
+    farms: 90,
+    gold: 90,
+    lulc: 90,
+  });
   const [polygonReport, setPolygonReport] = useState<PolygonReport | null>(null);
   const [polygonNeedsReport, setPolygonNeedsReport] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -486,6 +495,13 @@ export function Map() {
     setIsDrawingPolygon(false);
     setIsEditingPolygon(false);
   }, [mapInstance, setSelectedPolygon]);
+
+  const updateOverlayOpacity = useCallback((layer: OverlayOpacityKey, value: number) => {
+    setOverlayOpacity((current) => ({
+      ...current,
+      [layer]: value,
+    }));
+  }, []);
 
   useEffect(() => {
     setPolygonReport(null);
@@ -680,9 +696,6 @@ export function Map() {
         <h3 style="margin: 0 0 8px 0; color: ${goldColor}; font-size: 16px; font-weight: 600;">
           Gold Potential: ${goldProps.Class}
         </h3>
-        <p style="margin: 4px 0; color: #6b7280; font-size: 13px;">
-          <strong>Gold Area:</strong> ${goldProps.Area.toLocaleString()} m²
-        </p>
         <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 10px 0;" />
       `;
     }
@@ -694,9 +707,6 @@ export function Map() {
         <p style="margin: 4px 0; color: #374151; font-size: 14px;">
           <strong>Land Use:</strong>
           <span style="color: ${lulcColor}; font-weight: 500;">${lulcProps.ClassName}</span>
-        </p>
-        <p style="margin: 4px 0; color: #6b7280; font-size: 13px;">
-          <strong>Land Area:</strong> ${lulcProps.Area_Ha.toLocaleString()} ha
         </p>
         ${compliance ? `
           <div style="margin: 8px 0 0 0; padding: 10px 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;">
@@ -1012,13 +1022,46 @@ export function Map() {
             <input type="checkbox" checked={showFarms} onChange={(event) => setShowFarms(event.target.checked)} />
             <span>Farms</span>
           </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: '#6b7280' }}>
+            <span>Farms opacity: {overlayOpacity.farms}%</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={overlayOpacity.farms}
+              onChange={(event) => updateOverlayOpacity('farms', Number(event.target.value))}
+            />
+          </label>
           <label className="map-layer-toggle">
             <input type="checkbox" checked={showGold} onChange={(event) => setShowGold(event.target.checked)} />
             <span>Gold Potential</span>
           </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: '#6b7280' }}>
+            <span>Gold Potential opacity: {overlayOpacity.gold}%</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={overlayOpacity.gold}
+              onChange={(event) => updateOverlayOpacity('gold', Number(event.target.value))}
+            />
+          </label>
           <label className="map-layer-toggle">
             <input type="checkbox" checked={showLULC} onChange={(event) => setShowLULC(event.target.checked)} />
             <span>Land Use</span>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: '#6b7280' }}>
+            <span>Land Use opacity: {overlayOpacity.lulc}%</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={overlayOpacity.lulc}
+              onChange={(event) => updateOverlayOpacity('lulc', Number(event.target.value))}
+            />
           </label>
         </section>
 
@@ -1075,9 +1118,9 @@ export function Map() {
           </LayersControl>
 
           <Pane name="analysis-overlay-pane" style={{ zIndex: 350, pointerEvents: 'none' }}>
-            {showFarms ? <TileLayer url="/tiles/farms/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
-            {showGold ? <TileLayer url="/tiles/gold/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
-            {showLULC ? <TileLayer url="/tiles/lulc/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} /> : null}
+            {showFarms ? <TileLayer url="/tiles/farms/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} opacity={overlayOpacity.farms / 100} /> : null}
+            {showGold ? <TileLayer url="/tiles/gold/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} opacity={overlayOpacity.gold / 100} /> : null}
+            {showLULC ? <TileLayer url="/tiles/lulc/{z}/{x}/{y}.png" {...TILE_LAYER_OPTIONS} opacity={overlayOpacity.lulc / 100} /> : null}
           </Pane>
 
           <MapBounds />
