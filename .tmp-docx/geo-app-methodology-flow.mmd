@@ -1,0 +1,10 @@
+flowchart TD
+    A[Raw GeoJSON Data<br/>Farms, Gold, LULC] --> B[Import into Supabase Raw Tables]
+    B --> C[Normalize and Process with PostGIS]
+    C --> D[Create Analysis Tables and RPC Functions]
+    A --> E[Generate Raster Tile Images]
+    D --> F[Frontend Sends Point and Polygon Requests]
+    E --> G[Frontend Shows Static Overlay Tiles]
+    F --> H[Supabase Returns Analysis Results]
+    G --> I[User Views Interactive Map]
+    H --> I
