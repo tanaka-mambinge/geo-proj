@@ -208,6 +208,10 @@ const TILE_LAYER_OPTIONS = {
   maxNativeZoom: 14,
   maxZoom: 18,
   minZoom: 8,
+  // Overlay rasters may be rendered at higher source resolution,
+  // but they still map to the standard XYZ tile pyramid.
+  tileSize: 256,
+  zoomOffset: 0,
   opacity: 0.9,
 };
 
