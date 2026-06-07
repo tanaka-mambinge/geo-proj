@@ -105,11 +105,11 @@ type LULCComplianceKey =
   | 'Bareland';
 
 const goldColorScheme: Record<string, string> = {
-  'Very Low Potential': '#1e3a8a',
-  'Low Potential': '#3b82f6',
-  'Moderate Potential': '#8b5cf6',
+  'Very Low Potential': '#38bdf8',
+  'Low Potential': '#22c55e',
+  'Moderate Potential': '#facc15',
   'High Potential': '#f97316',
-  'Very High Potential': '#dc2626',
+  'Very High Potential': '#ef4444',
 };
 
 const lulcColorScheme: Record<string, string> = {

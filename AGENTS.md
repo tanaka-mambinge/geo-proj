@@ -100,3 +100,11 @@ Experimental or temporary outputs may be written to:
 Before swapping in a new live tile tree, back up the existing `public/tiles` directory to a timestamped folder under `public/`.
 
 Do not include those backup/test directories in normal commits unless explicitly requested.
+
+## Frontend Deploys
+
+The Vercel project for `geo-proj` auto-deploys production from pushes to `origin/master`.
+
+- Preferred release flow for frontend changes: commit, push to `master`, and wait for the linked Vercel production deployment.
+- Manual `vercel --prod` deploys are usually unnecessary for this repo.
+- If there are large backup or test tile directories under `public/`, avoid trying to deploy the whole working tree with the Vercel CLI unless you first deploy from a clean committed checkout.
