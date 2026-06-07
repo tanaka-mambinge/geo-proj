@@ -114,11 +114,16 @@ const goldColorScheme: Record<string, string> = {
 
 const lulcColorScheme: Record<string, string> = {
   Water: '#3b82f6',
-  Builtup: '#6b7280',
+  Builtup: '#7f1d1d',
   Croplands: '#facc15',
   Vegetation: '#22c55e',
   'Wooded Grasslands': '#15803d',
   Bareland: '#d4d4d4',
+};
+
+const farmsColorScheme: Record<string, string> = {
+  Commercial: '#16a34a',
+  Other: '#2563eb',
 };
 
 const CLAIM_STATUS_TEXT = 'Confirm with mining cadastre register (Mashonaland Central Province)';
@@ -388,8 +393,8 @@ function AreaBreakdownSection({
   );
 }
 
-function Legend({ showGold, showLULC }: { showGold: boolean; showLULC: boolean }) {
-  if (!showGold && !showLULC) {
+function Legend({ showFarms, showGold, showLULC }: { showFarms: boolean; showGold: boolean; showLULC: boolean }) {
+  if (!showFarms && !showGold && !showLULC) {
     return null;
   }
 
@@ -399,6 +404,18 @@ function Legend({ showGold, showLULC }: { showGold: boolean; showLULC: boolean }
         <h2 className="map-sidebar-title">Legend</h2>
         <p className="map-sidebar-muted">Reference colors for the visible thematic layers.</p>
       </div>
+
+      {showFarms ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: '#111827' }}>Farms</p>
+          {Object.entries(farmsColorScheme).map(([label, color]) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '14px', height: '14px', borderRadius: '4px', background: color, border: '1px solid #1f2937' }} />
+              <span style={{ fontSize: '13px', color: '#374151' }}>{label === 'Other' ? 'Other / unknown' : label}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {showGold ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1069,7 +1086,7 @@ export function Map() {
           </label>
         </section>
 
-        <Legend showGold={showGold} showLULC={showLULC} />
+        <Legend showFarms={showFarms} showGold={showGold} showLULC={showLULC} />
 
         {interactionMode === 'polygon' && polygonReport ? (
           <>
