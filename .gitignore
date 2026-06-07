@@ -31,3 +31,6 @@ final-screenshot.png
 .DS_Store
 Thumbs.db
 .vercel
+
+
+public/tiles-*
